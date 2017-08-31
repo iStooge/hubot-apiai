@@ -23,9 +23,10 @@ apiai = require('apiai')
 util = require('util')
 
 ai = apiai(process.env.API_AI_CLIENT_ACCESS_TOKEN)
+ai_free = apiai(process.env.API_AI_CLIENT_ACCESS_TOKEN_FREE)
 
 module.exports = (robot) ->
-  robot.respond /(.*)/i, (msg) ->
+  robot.respond /hey (.*)/i, (msg) ->
     query = msg.match[1]
     askAI(query, msg, getSession(msg))
 
@@ -51,6 +52,51 @@ module.exports = (robot) ->
     request = ai.textRequest(query, {sessionId: session})
     request.on('response', (response) ->
       robot.logger.debug("From API.AI: " + util.inspect(response))
+      console.log("From API.AI (HEY): " + util.inspect(response))
+      if (response.result.actionIncomplete is true)
+        # Still refining...
+        msg.send(response.result.fulfillment.speech)
+      else if (response.result.metadata? &&
+               response.result.metadata.intentId? &&
+               response.result.action isnt "input.unknown")
+
+        # API.AI has determined the intent
+        msg.send(response.result.fulfillment.speech)
+        robot.logger.info("Emitting robot action: " +
+                    response.result.metadata.intentName + ", " +
+                    util.inspect(response.result.parameters))
+        # Emit event with message context and parameters
+        robot.emit response.result.metadata.intentName, msg, response.result.parameters
+      else
+        # Default or small talk
+        if (response.result.fulfillment.speech?)
+          msg.send(response.result.fulfillment.speech)
+    )
+    request.on('error', (error) ->
+      robot.logger.error(error)
+    )
+    request.end()
+
+
+
+# Free Text Recognition
+# Regex for filtering messages directed to Imo
+  robot.hear /(^(?!.*[Ii]mo).*$)/i, (msg) ->
+    query = msg.match[1]
+    askAI_FREE(query, msg, getSession(msg))
+
+  askAI_FREE = (query, msg, session) ->
+    # Process conversation with AI back-end
+    unless process.env.API_AI_CLIENT_ACCESS_TOKEN_FREE?
+      msg.send "I need a token to be smart :grin:"
+      robot.logger.error "API_AI_CLIENT_ACCESS_TOKEN_FREE not set"
+      return
+
+    robot.logger.debug("Calling API.AI with '#{query}' and session #{session}")
+    request = ai_free.textRequest(query, {sessionId: session})
+    request.on('response', (response) ->
+      robot.logger.debug("From API.AI: " + util.inspect(response))
+      console.log("From API.AI: (FREETEXT)" + util.inspect(response))
       if (response.result.actionIncomplete is true)
         # Still refining...
         msg.send(response.result.fulfillment.speech)
